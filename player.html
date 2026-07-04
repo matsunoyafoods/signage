@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="theme-color" content="#000000">
+<title>店舗サイネージ プレイヤー</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box}
+  html,body{width:100%;height:100%;background:#000;overflow:hidden;
+    -webkit-user-select:none;user-select:none;-webkit-tap-highlight-color:transparent;
+    font-family:-apple-system,"Segoe UI","Noto Sans JP",sans-serif;color:#fff}
+  #stage{position:fixed;inset:0;background:#000}
+  .slide{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:0;transition:opacity .6s ease}
+  #empty{position:absolute;inset:0;display:none;align-items:center;justify-content:center;
+    text-align:center;color:#666;font-size:4vh;padding:6vh;line-height:1.6}
+  /* 起動オーバーレイ（全画面化にはユーザー操作が必要なため） */
+  #start{position:fixed;inset:0;z-index:20;display:flex;flex-direction:column;
+    align-items:center;justify-content:center;background:#0b1220;text-align:center;padding:8vh}
+  #start h1{font-size:5vh;margin-bottom:2vh}
+  #start p{font-size:2.4vh;color:#9fb0c8;line-height:1.7;margin-bottom:4vh}
+  #startBtn{font-size:3vh;font-weight:700;color:#0b1220;background:#34d399;
+    border:0;border-radius:999px;padding:2.2vh 6vh;cursor:pointer}
+  /* 状態バッジ（左下・小さく） */
+  #badge{position:fixed;left:1.5vh;bottom:1.5vh;z-index:15;font-size:1.6vh;
+    background:rgba(0,0,0,.45);color:#cbd5e1;padding:.6vh 1.4vh;border-radius:1vh;
+    font-variant-numeric:tabular-nums;opacity:0;transition:opacity .3s}
+  #stage.debug #badge{opacity:1}
+  #err{position:fixed;top:1.5vh;left:1.5vh;right:1.5vh;z-index:16;display:none;
+    background:rgba(220,38,38,.85);color:#fff;font-size:1.8vh;padding:1.2vh 1.6vh;border-radius:1vh}
+</style>
+</head>
+<body>
+<div id="stage">
+  <img id="slideA" class="slide" alt="">
+  <img id="slideB" class="slide" alt="">
+  <div id="empty">現在の時間帯に表示する画像がありません<br><span style="font-size:2.6vh">管理ページから追加してください</span></div>
+  <div id="err"></div>
+  <div id="badge">--</div>
+</div>
+
+<div id="start">
+  <h1>🖥️ サイネージ プレイヤー</h1>
+  <p id="startInfo">設定を読み込んでいます…</p>
+  <button id="startBtn" style="display:none">画面をタップして開始</button>
+</div>
+
+<script>
+"use strict";
+(function(){
+  /* ========= 設定URLの決定 =========
+     優先順位: ?src=... クエリ → 同フォルダの ./config.json */
+  function getParam(k){
+    try{ return new URLSearchParams(location.search).get(k); }catch(e){ return null; }
+  }
+  var SRC = getParam("src") || "./config.json";
+  var DEBUG = getParam("debug")==="1";
+  var CACHE_KEY = "signage_player_cache_v1";
+
+  /* ========= 状態 ========= */
+  var cfg = null, cfgStr = "";
+  var playMode = null, slideIdx = 0, countdown = 0, frontIsA = true;
+  var started = false, wakeLock = null;
+
+  var $ = function(id){ return document.getElementById(id); };
+  var slideA=$("slideA"), slideB=$("slideB"), stage=$("stage");
+  if(DEBUG) stage.classList.add("debug");
+
+  /* ========= ユーティリティ ========= */
+  function toMin(t){ var a=(t||"0:0").split(":"); return (parseInt(a[0],10)||0)*60+(parseInt(a[1],10)||0); }
+  function inRange(now,s,e){ if(s===e)return false; return s<e ? (now>=s&&now<e) : (now>=s||now<e); }
+  function currentMode(d){
+    if(!cfg) return null;
+    var now = d.getHours()*60 + d.getMinutes();
+    if(cfg.lunch  && inRange(now,toMin(cfg.lunch.start), toMin(cfg.lunch.end)))  return "lunch";
+    if(cfg.dinner && inRange(now,toMin(cfg.dinner.start),toMin(cfg.dinner.end))) return "dinner";
+    return null;
+  }
+  function showErr(msg){ var e=$("err"); if(!msg){e.style.display="none";return;} e.textContent=msg; e.style.display="block"; }
+
+  /* ========= 設定の取得（ポーリング） ========= */
+  function normalize(c){
+    c = c || {};
+    function mode(m){ m=m||{}; return {
+      start: m.start||"00:00", end: m.end||"00:00",
+      sec: Math.max(1, parseInt(m.sec,10)||5),
+      images: Array.isArray(m.images)? m.images.filter(function(x){return typeof x==="string"&&x;}) : []
+    };}
+    return {
+      pollSec: Math.max(5, parseInt(c.pollSec,10)||30),
+      lunch: mode(c.lunch), dinner: mode(c.dinner)
+    };
+  }
+  function applyConfig(raw, fromCache){
+    var next = normalize(raw);
+    var s = JSON.stringify(next);
+    if(s === cfgStr) return;          // 変更なし → 何もしない（ちらつき防止）
+    cfgStr = s; cfg = next;
+    if(!fromCache){
+      try{ localStorage.setItem(CACHE_KEY, JSON.stringify(raw)); }catch(e){}
+    }
+    refreshPlayback(currentMode(new Date()), true);
+  }
+  function fetchConfig(){
+    var url = SRC + (SRC.indexOf("?")>=0?"&":"?") + "_t=" + Date.now(); // キャッシュ回避
+    fetch(url, {cache:"no-store"}).then(function(r){
+      if(!r.ok) throw new Error("HTTP "+r.status);
+      return r.json();
+    }).then(function(json){
+      showErr("");
+      applyConfig(json, false);
+      afterFirstLoad();
+    }).catch(function(e){
+      // 取得失敗 → キャッシュで継続
+      if(!cfg){
+        var cached=null;
+        try{ cached=JSON.parse(localStorage.getItem(CACHE_KEY)||"null"); }catch(_){}
+        if(cached){ applyConfig(cached, true); afterFirstLoad(); showErr("オフライン: 前回の設定で表示中"); }
+        else { $("startInfo").textContent = "設定を取得できません: "+SRC+"\n（"+e.message+"）"; }
+      }else{
+        showErr("更新に失敗（前回の設定を継続）: "+e.message);
+      }
+    });
+  }
+  function afterFirstLoad(){
+    if(started) return;
+    // 全画面はユーザー操作が必要なため、開始ボタンを表示
+    $("startInfo").textContent = "設定を読み込みました。画面をタップすると全画面で再生を開始します。";
+    $("startBtn").style.display = "inline-block";
+  }
+
+  /* ========= スライド表示 ========= */
+  function showImage(src){
+    var incoming = frontIsA ? slideB : slideA;
+    var outgoing = frontIsA ? slideA : slideB;
+    incoming.onload = function(){ incoming.style.opacity="1"; outgoing.style.opacity="0"; };
+    incoming.onerror= function(){ incoming.style.opacity="1"; outgoing.style.opacity="0"; };
+    incoming.src = src;
+    if(incoming.complete && incoming.naturalWidth>0){ incoming.style.opacity="1"; outgoing.style.opacity="0"; }
+    frontIsA = !frontIsA;
+  }
+  function clearSlides(){ slideA.style.opacity="0"; slideB.style.opacity="0"; slideA.removeAttribute("src"); slideB.removeAttribute("src"); }
+
+  function refreshPlayback(mode, force){
+    if(mode!==playMode || force){ playMode=mode; slideIdx=0; }
+    var imgs = mode ? cfg[mode].images : [];
+    if(!mode || imgs.length===0){ $("empty").style.display="flex"; clearSlides(); countdown=0; return; }
+    $("empty").style.display="none";
+    if(slideIdx>=imgs.length) slideIdx=0;
+    showImage(imgs[slideIdx]);
+    countdown = cfg[mode].sec;
+  }
+  function nextSlide(){
+    if(!playMode||!cfg) return;
+    var imgs=cfg[playMode].images; if(imgs.length===0) return;
+    slideIdx=(slideIdx+1)%imgs.length;
+    showImage(imgs[slideIdx]);
+    countdown = cfg[playMode].sec;
+  }
+
+  /* ========= 毎秒ループ ========= */
+  var pollAcc = 0;
+  function tick(){
+    var d = new Date();
+    if(cfg){
+      var mode = currentMode(d);
+      if(mode!==playMode) refreshPlayback(mode, true);
+      if(playMode && cfg[playMode].images.length>0){
+        countdown--;
+        if(countdown<=0) nextSlide();
+      }
+      // バッジ（デバッグ時のみ表示）
+      var hh=String(d.getHours()).padStart(2,"0"),mm=String(d.getMinutes()).padStart(2,"0"),ss=String(d.getSeconds()).padStart(2,"0");
+      $("badge").textContent = hh+":"+mm+":"+ss+" / "+(mode?mode.toUpperCase():"待機")+" / 次:"+(countdown>0?countdown+"s":"--");
+      // ポーリング
+      pollAcc++;
+      if(pollAcc >= cfg.pollSec){ pollAcc=0; fetchConfig(); }
+    }
+  }
+
+  /* ========= 全画面・スリープ防止 ========= */
+  function goFullscreen(){
+    var el=document.documentElement;
+    try{
+      if(el.requestFullscreen) el.requestFullscreen().catch(function(){});
+      else if(el.webkitRequestFullscreen) el.webkitRequestFullscreen();
+    }catch(e){}
+  }
+  function requestWake(){
+    try{
+      if("wakeLock" in navigator){
+        navigator.wakeLock.request("screen").then(function(w){ wakeLock=w; }).catch(function(){});
+      }
+    }catch(e){}
+  }
+  document.addEventListener("visibilitychange", function(){
+    if(!document.hidden){ if(cfg) tick(); requestWake(); }
+  });
+
+  function startPlayback(){
+    if(started) return;
+    started = true;
+    $("start").style.display = "none";
+    goFullscreen();
+    requestWake();
+    refreshPlayback(currentMode(new Date()), true);
+  }
+
+  /* ========= 起動 ========= */
+  $("startBtn").addEventListener("click", startPlayback);
+  // 画面のどこをタップしても開始できるように
+  $("start").addEventListener("click", function(e){ if($("startBtn").style.display!=="none") startPlayback(); });
+  // 再生中に画面タップで手動送り
+  stage.addEventListener("click", function(){ if(started) nextSlide(); });
+
+  fetchConfig();               // 初回取得
+  setInterval(tick, 1000);     // 毎秒ループ
+})();
+</script>
+</body>
+</html>
