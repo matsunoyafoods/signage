@@ -14,14 +14,12 @@
   .slide{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:0;transition:opacity .6s ease}
   #empty{position:absolute;inset:0;display:none;align-items:center;justify-content:center;
     text-align:center;color:#666;font-size:4vh;padding:6vh;line-height:1.6}
-  /* 起動オーバーレイ（全画面化にはユーザー操作が必要なため） */
   #start{position:fixed;inset:0;z-index:20;display:flex;flex-direction:column;
     align-items:center;justify-content:center;background:#0b1220;text-align:center;padding:8vh}
   #start h1{font-size:5vh;margin-bottom:2vh}
   #start p{font-size:2.4vh;color:#9fb0c8;line-height:1.7;margin-bottom:4vh}
   #startBtn{font-size:3vh;font-weight:700;color:#0b1220;background:#34d399;
     border:0;border-radius:999px;padding:2.2vh 6vh;cursor:pointer}
-  /* 状態バッジ（左下・小さく） */
   #badge{position:fixed;left:1.5vh;bottom:1.5vh;z-index:15;font-size:1.6vh;
     background:rgba(0,0,0,.45);color:#cbd5e1;padding:.6vh 1.4vh;border-radius:1vh;
     font-variant-numeric:tabular-nums;opacity:0;transition:opacity .3s}
@@ -48,88 +46,93 @@
 <script>
 "use strict";
 (function(){
-  /* ========= 設定URLの決定 =========
-     優先順位: ?src=... クエリ → 同フォルダの ./config.json */
-  function getParam(k){
-    try{ return new URLSearchParams(location.search).get(k); }catch(e){ return null; }
-  }
+  function getParam(k){ try{ return new URLSearchParams(location.search).get(k); }catch(e){ return null; } }
   var SRC = getParam("src") || "./config.json";
   var DEBUG = getParam("debug")==="1";
   var CACHE_KEY = "signage_player_cache_v1";
 
-  /* ========= 状態 ========= */
   var cfg = null, cfgStr = "";
-  var playMode = null, slideIdx = 0, countdown = 0, frontIsA = true;
-  var started = false, wakeLock = null;
+  var playModeId = null, slideIdx = 0, countdown = 0, frontIsA = true;
+  var started = false, wakeLock = null, pollAcc = 0;
 
   var $ = function(id){ return document.getElementById(id); };
   var slideA=$("slideA"), slideB=$("slideB"), stage=$("stage");
   if(DEBUG) stage.classList.add("debug");
 
-  /* ========= ユーティリティ ========= */
   function toMin(t){ var a=(t||"0:0").split(":"); return (parseInt(a[0],10)||0)*60+(parseInt(a[1],10)||0); }
   function inRange(now,s,e){ if(s===e)return false; return s<e ? (now>=s&&now<e) : (now>=s||now<e); }
+
+  /* 設定を正規化：新形式(modes配列) と 旧形式(lunch/dinner) の両対応 */
+  function normalize(c){
+    c = c || {};
+    function mode(m, i){
+      m = m || {};
+      return {
+        id: m.id || ("mode"+i),
+        name: m.name || ("モード"+(i+1)),
+        start: m.start || "00:00",
+        end: m.end || "00:00",
+        sec: Math.max(1, parseInt(m.sec,10)||5),
+        images: Array.isArray(m.images) ? m.images.filter(function(x){return typeof x==="string"&&x;}) : []
+      };
+    }
+    var modes;
+    if(Array.isArray(c.modes)){
+      modes = c.modes.map(mode);
+    }else{
+      // 旧形式の後方互換
+      modes = [];
+      if(c.lunch){ var l=mode(c.lunch,0); l.id="lunch"; l.name=c.lunch.name||"ランチ"; modes.push(l); }
+      if(c.dinner){ var d=mode(c.dinner,1); d.id="dinner"; d.name=c.dinner.name||"ディナー"; modes.push(d); }
+    }
+    return { pollSec: Math.max(5, parseInt(c.pollSec,10)||30), modes: modes };
+  }
   function currentMode(d){
     if(!cfg) return null;
     var now = d.getHours()*60 + d.getMinutes();
-    if(cfg.lunch  && inRange(now,toMin(cfg.lunch.start), toMin(cfg.lunch.end)))  return "lunch";
-    if(cfg.dinner && inRange(now,toMin(cfg.dinner.start),toMin(cfg.dinner.end))) return "dinner";
+    for(var i=0;i<cfg.modes.length;i++){
+      var m=cfg.modes[i];
+      if(inRange(now, toMin(m.start), toMin(m.end))) return m;
+    }
     return null;
   }
+  function modeById(id){
+    if(!cfg||id==null) return null;
+    for(var i=0;i<cfg.modes.length;i++){ if(cfg.modes[i].id===id) return cfg.modes[i]; }
+    return null;
+  }
+
   function showErr(msg){ var e=$("err"); if(!msg){e.style.display="none";return;} e.textContent=msg; e.style.display="block"; }
 
-  /* ========= 設定の取得（ポーリング） ========= */
-  function normalize(c){
-    c = c || {};
-    function mode(m){ m=m||{}; return {
-      start: m.start||"00:00", end: m.end||"00:00",
-      sec: Math.max(1, parseInt(m.sec,10)||5),
-      images: Array.isArray(m.images)? m.images.filter(function(x){return typeof x==="string"&&x;}) : []
-    };}
-    return {
-      pollSec: Math.max(5, parseInt(c.pollSec,10)||30),
-      lunch: mode(c.lunch), dinner: mode(c.dinner)
-    };
-  }
   function applyConfig(raw, fromCache){
     var next = normalize(raw);
     var s = JSON.stringify(next);
-    if(s === cfgStr) return;          // 変更なし → 何もしない（ちらつき防止）
+    if(s === cfgStr) return;
     cfgStr = s; cfg = next;
-    if(!fromCache){
-      try{ localStorage.setItem(CACHE_KEY, JSON.stringify(raw)); }catch(e){}
-    }
+    if(!fromCache){ try{ localStorage.setItem(CACHE_KEY, JSON.stringify(raw)); }catch(e){} }
     refreshPlayback(currentMode(new Date()), true);
   }
   function fetchConfig(){
-    var url = SRC + (SRC.indexOf("?")>=0?"&":"?") + "_t=" + Date.now(); // キャッシュ回避
+    var url = SRC + (SRC.indexOf("?")>=0?"&":"?") + "_t=" + Date.now();
     fetch(url, {cache:"no-store"}).then(function(r){
       if(!r.ok) throw new Error("HTTP "+r.status);
       return r.json();
     }).then(function(json){
-      showErr("");
-      applyConfig(json, false);
-      afterFirstLoad();
+      showErr(""); applyConfig(json, false); afterFirstLoad();
     }).catch(function(e){
-      // 取得失敗 → キャッシュで継続
       if(!cfg){
-        var cached=null;
-        try{ cached=JSON.parse(localStorage.getItem(CACHE_KEY)||"null"); }catch(_){}
+        var cached=null; try{ cached=JSON.parse(localStorage.getItem(CACHE_KEY)||"null"); }catch(_){}
         if(cached){ applyConfig(cached, true); afterFirstLoad(); showErr("オフライン: 前回の設定で表示中"); }
-        else { $("startInfo").textContent = "設定を取得できません: "+SRC+"\n（"+e.message+"）"; }
-      }else{
-        showErr("更新に失敗（前回の設定を継続）: "+e.message);
-      }
+        else { $("startInfo").textContent = "設定を取得できません: "+SRC+"（"+e.message+"）"; }
+      }else{ showErr("更新に失敗（前回の設定を継続）: "+e.message); }
     });
   }
   function afterFirstLoad(){
     if(started) return;
-    // 全画面はユーザー操作が必要なため、開始ボタンを表示
     $("startInfo").textContent = "設定を読み込みました。画面をタップすると全画面で再生を開始します。";
     $("startBtn").style.display = "inline-block";
   }
 
-  /* ========= スライド表示 ========= */
   function showImage(src){
     var incoming = frontIsA ? slideB : slideA;
     var outgoing = frontIsA ? slideA : slideB;
@@ -142,79 +145,61 @@
   function clearSlides(){ slideA.style.opacity="0"; slideB.style.opacity="0"; slideA.removeAttribute("src"); slideB.removeAttribute("src"); }
 
   function refreshPlayback(mode, force){
-    if(mode!==playMode || force){ playMode=mode; slideIdx=0; }
-    var imgs = mode ? cfg[mode].images : [];
+    var id = mode ? mode.id : null;
+    if(id!==playModeId || force){ playModeId=id; slideIdx=0; }
+    var imgs = mode ? mode.images : [];
     if(!mode || imgs.length===0){ $("empty").style.display="flex"; clearSlides(); countdown=0; return; }
     $("empty").style.display="none";
     if(slideIdx>=imgs.length) slideIdx=0;
     showImage(imgs[slideIdx]);
-    countdown = cfg[mode].sec;
+    countdown = mode.sec;
   }
   function nextSlide(){
-    if(!playMode||!cfg) return;
-    var imgs=cfg[playMode].images; if(imgs.length===0) return;
+    var mode = modeById(playModeId); if(!mode) return;
+    var imgs=mode.images; if(imgs.length===0) return;
     slideIdx=(slideIdx+1)%imgs.length;
     showImage(imgs[slideIdx]);
-    countdown = cfg[playMode].sec;
+    countdown = mode.sec;
   }
 
-  /* ========= 毎秒ループ ========= */
-  var pollAcc = 0;
   function tick(){
     var d = new Date();
-    if(cfg){
-      var mode = currentMode(d);
-      if(mode!==playMode) refreshPlayback(mode, true);
-      if(playMode && cfg[playMode].images.length>0){
-        countdown--;
-        if(countdown<=0) nextSlide();
-      }
-      // バッジ（デバッグ時のみ表示）
-      var hh=String(d.getHours()).padStart(2,"0"),mm=String(d.getMinutes()).padStart(2,"0"),ss=String(d.getSeconds()).padStart(2,"0");
-      $("badge").textContent = hh+":"+mm+":"+ss+" / "+(mode?mode.toUpperCase():"待機")+" / 次:"+(countdown>0?countdown+"s":"--");
-      // ポーリング
-      pollAcc++;
-      if(pollAcc >= cfg.pollSec){ pollAcc=0; fetchConfig(); }
+    if(!cfg) return;
+    var mode = currentMode(d);
+    if((mode?mode.id:null)!==playModeId) refreshPlayback(mode, true);
+    var active = modeById(playModeId);
+    if(active && active.images.length>0){
+      countdown--;
+      if(countdown<=0) nextSlide();
     }
+    var hh=String(d.getHours()).padStart(2,"0"),mm=String(d.getMinutes()).padStart(2,"0"),ss=String(d.getSeconds()).padStart(2,"0");
+    $("badge").textContent = hh+":"+mm+":"+ss+" / "+(mode?mode.name:"待機")+" / 次:"+(active&&countdown>0?countdown+"s":"--");
+    pollAcc++;
+    if(pollAcc >= cfg.pollSec){ pollAcc=0; fetchConfig(); }
   }
 
-  /* ========= 全画面・スリープ防止 ========= */
   function goFullscreen(){
     var el=document.documentElement;
-    try{
-      if(el.requestFullscreen) el.requestFullscreen().catch(function(){});
-      else if(el.webkitRequestFullscreen) el.webkitRequestFullscreen();
-    }catch(e){}
+    try{ if(el.requestFullscreen) el.requestFullscreen().catch(function(){}); else if(el.webkitRequestFullscreen) el.webkitRequestFullscreen(); }catch(e){}
   }
   function requestWake(){
-    try{
-      if("wakeLock" in navigator){
-        navigator.wakeLock.request("screen").then(function(w){ wakeLock=w; }).catch(function(){});
-      }
-    }catch(e){}
+    try{ if("wakeLock" in navigator){ navigator.wakeLock.request("screen").then(function(w){ wakeLock=w; }).catch(function(){}); } }catch(e){}
   }
-  document.addEventListener("visibilitychange", function(){
-    if(!document.hidden){ if(cfg) tick(); requestWake(); }
-  });
+  document.addEventListener("visibilitychange", function(){ if(!document.hidden){ if(cfg) tick(); requestWake(); } });
 
   function startPlayback(){
-    if(started) return;
-    started = true;
+    if(started) return; started = true;
     $("start").style.display = "none";
-    goFullscreen();
-    requestWake();
+    goFullscreen(); requestWake();
     refreshPlayback(currentMode(new Date()), true);
   }
 
-  /* ========= 起動 ========= */
   $("startBtn").addEventListener("click", startPlayback);
-  // 画面のどこをタップしても開始できるように
-  $("start").addEventListener("click", function(e){ if($("startBtn").style.display!=="none") startPlayback(); });
-  // 再生中に画面タップで手動送り
+  $("start").addEventListener("click", function(){ if($("startBtn").style.display!=="none") startPlayback(); });
   stage.addEventListener("click", function(){ if(started) nextSlide(); });
 
-  fetchConfig();               // 初回取得
-  setInterval(tick, 1000);     // 毎秒ループ
+  fetchConfig();
+  setInterval(tick, 1000);
 })();
 </script>
 </body>
