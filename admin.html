@@ -1,0 +1,429 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>サイネージ 管理ページ（遠隔設定）</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  .frame-9x16{aspect-ratio:9/16;}
+  @supports not (aspect-ratio:9/16){.frame-9x16{position:relative;}.frame-9x16::before{content:"";display:block;padding-top:177.78%;}}
+  .slide-img{transition:opacity .6s ease;}
+  .drop-active{outline:3px dashed #38bdf8;outline-offset:-6px;background:rgba(56,189,248,.08);}
+  ::-webkit-scrollbar{width:8px;height:8px}::-webkit-scrollbar-thumb{background:#334155;border-radius:8px}
+</style>
+</head>
+<body class="bg-slate-900 text-slate-100 min-h-screen">
+
+<div class="sticky top-0 z-30 bg-slate-950/90 backdrop-blur border-b border-slate-800">
+  <div class="max-w-7xl mx-auto px-4 py-3 flex items-center gap-3 flex-wrap">
+    <div class="w-9 h-9 rounded-lg bg-gradient-to-br from-sky-400 to-indigo-500 flex items-center justify-center font-bold text-slate-900">S</div>
+    <div>
+      <h1 class="text-base font-bold leading-none">サイネージ 管理ページ</h1>
+      <p class="text-[11px] text-slate-400 leading-none mt-1">ここで編集 → config.json を書き出し → GitHubへ設置</p>
+    </div>
+    <div class="flex-1"></div>
+    <span id="statusMode" class="px-3 py-1.5 rounded-full font-semibold bg-slate-800 text-sm">--</span>
+    <span id="statusClock" class="px-3 py-1.5 rounded-full font-mono bg-slate-800 text-sm tabular-nums">--:--:--</span>
+  </div>
+</div>
+
+<div class="max-w-7xl mx-auto p-4 grid grid-cols-1 lg:grid-cols-[minmax(0,360px)_1fr] gap-6 items-start">
+
+  <!-- プレビュー（現在時刻に合わせて自動表示） -->
+  <div class="lg:sticky lg:top-20">
+    <div class="mx-auto" style="max-width:360px">
+      <div class="frame-9x16 relative w-full rounded-2xl overflow-hidden bg-black border border-slate-700 shadow-2xl">
+        <img id="slideA" class="slide-img absolute inset-0 w-full h-full object-cover opacity-0" alt="">
+        <img id="slideB" class="slide-img absolute inset-0 w-full h-full object-cover opacity-0" alt="">
+        <div id="emptyState" class="absolute inset-0 flex flex-col items-center justify-center text-center text-slate-500 px-6">
+          <div class="text-5xl mb-3">🖼️</div><p class="text-sm">現在の時間帯に画像がありません</p>
+        </div>
+        <div class="absolute top-0 inset-x-0 p-3 flex justify-between bg-gradient-to-b from-black/60 to-transparent pointer-events-none">
+          <span id="ovlMode" class="text-xs font-bold px-2 py-1 rounded bg-black/50">--</span>
+          <span id="ovlCount" class="text-xs font-mono px-2 py-1 rounded bg-black/50 tabular-nums">--</span>
+        </div>
+      </div>
+      <p class="text-center text-[11px] text-slate-500 mt-2">実機 1080×1920 (9:16)・現在時刻のモードを自動表示</p>
+    </div>
+  </div>
+
+  <!-- 設定 -->
+  <div class="space-y-5">
+
+    <section class="bg-gradient-to-br from-sky-900/40 to-indigo-900/30 rounded-xl p-4 border border-sky-800">
+      <h2 class="text-sm font-bold text-sky-200 mb-2">🚀 遠隔更新の手順</h2>
+      <ol class="text-[12px] text-slate-300 list-decimal ml-5 space-y-1 mb-3">
+        <li>下で時間帯モード・画像・秒数を編集する</li>
+        <li>「config.json を書き出す」でファイルを保存</li>
+        <li>GitHub（matsunoyafoods/signage）で config.json を差し替え（Upload）</li>
+        <li>約30秒で全サイネージが自動反映（URLは固定）</li>
+      </ol>
+      <div class="flex flex-wrap gap-2">
+        <button id="btnExport" class="px-4 py-2 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-slate-900 font-semibold text-sm">⬇ config.json を書き出す</button>
+        <button id="btnImport" class="px-4 py-2 rounded-lg bg-slate-700 hover:bg-slate-600 text-sm">⬆ 既存の config.json を読み込む</button>
+        <input type="file" id="importFile" accept=".json,application/json" class="hidden">
+      </div>
+      <div class="mt-3 flex items-center gap-2 flex-wrap">
+        <label class="text-[12px] text-slate-300">自動更新の間隔</label>
+        <input type="number" id="pollSec" min="5" max="3600" class="w-24 bg-slate-900 border border-slate-600 rounded px-2 py-1 text-sm text-center">
+        <span class="text-[12px] text-slate-400">秒ごとにサイネージが設定を確認</span>
+      </div>
+      <p id="sizeWarn" class="text-[11px] text-amber-400/90 mt-2 hidden">⚠ アップロード画像は config.json に埋め込まれます。合計サイズ: <span id="sizeVal">0</span>（重い場合は画像URLの利用を推奨）</p>
+    </section>
+
+    <!-- BGM（共通） -->
+    <section class="bg-slate-800/60 rounded-xl p-4 border border-slate-700">
+      <h2 class="text-sm font-bold text-slate-300 mb-2">🎵 BGM（全時間帯 共通）</h2>
+      <div class="flex items-center gap-3 mb-3">
+        <label class="text-xs text-slate-300 whitespace-nowrap">音量</label>
+        <input type="range" id="volRange" min="0" max="100" step="1" class="flex-1 accent-sky-400">
+        <span id="volVal" class="text-xs text-slate-400 w-10 text-right">70%</span>
+      </div>
+      <div class="flex gap-2 mb-2">
+        <input type="url" id="trackUrl" placeholder="音楽ファイルのURL（例: music/bgm1.mp3）" class="flex-1 bg-slate-900 border border-slate-600 rounded px-3 py-2 text-sm">
+        <button id="btnAddTrack" class="px-3 py-2 rounded bg-sky-500 hover:bg-sky-400 text-slate-900 text-sm font-semibold">追加</button>
+      </div>
+      <div id="trackList" class="space-y-1"></div>
+      <p class="text-[11px] text-slate-500 mt-2 leading-relaxed">
+        音楽は config.json に埋め込めないため、mp3等のファイルは GitHub リポジトリの <code class="text-slate-300">music/</code> フォルダに置き、
+        <code class="text-slate-300">music/ファイル名.mp3</code> のように指定します。曲は上から順にループ再生されます。
+        著作権に配慮し、店舗利用可（ロイヤリティフリー等）の音源をご利用ください。再生はサイネージで「開始」をタップした後に始まります。
+      </p>
+    </section>
+
+    <!-- 特別休日（土日祝扱いにする日） -->
+    <section class="bg-slate-800/60 rounded-xl p-4 border border-slate-700">
+      <h2 class="text-sm font-bold text-slate-300 mb-1">📅 特別休日（土日祝あつかいにする日）</h2>
+      <p class="text-[11px] text-slate-500 mb-2">日本の祝日は自動で「土日祝」判定されます。ここには、祝日ではないけれど休業・特別営業にしたい日（年末年始・お盆など）を追加します。</p>
+      <div class="flex gap-2 mb-2">
+        <input type="date" id="extraDate" class="bg-slate-900 border border-slate-600 rounded px-2 py-1.5 text-sm">
+        <button id="btnAddExtra" class="px-3 py-2 rounded bg-sky-500 hover:bg-sky-400 text-slate-900 text-sm font-semibold">追加</button>
+      </div>
+      <div id="extraList" class="flex flex-wrap gap-2"></div>
+    </section>
+
+    <!-- モード一覧 -->
+    <div id="modeList" class="space-y-4"></div>
+
+    <button id="btnAddMode" class="w-full py-3 rounded-xl border-2 border-dashed border-slate-600 hover:border-sky-400 hover:text-sky-300 text-slate-300 text-sm font-semibold transition">＋ 時間帯モードを追加</button>
+
+    <div class="flex gap-2">
+      <button id="btnReset" class="flex-1 py-2 rounded-lg bg-slate-700 hover:bg-slate-600 text-sm">初期状態（ランチ・ディナー）に戻す</button>
+    </div>
+    <p class="text-[11px] text-slate-500 leading-relaxed">
+      時間帯が重なる場合は「上にあるモードが優先」されます。時間外はどのモードにも該当せず待機画面になります。
+      編集内容はこのPCに自動保存されます（保存＝config.json書き出し→GitHub差し替えで反映）。
+    </p>
+  </div>
+</div>
+
+<script>
+"use strict";
+(function(){
+  var DUMMY_LUNCH=[
+    "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=1080&q=80",
+    "https://images.unsplash.com/photo-1567620905732-2d1ec7ab7445?w=1080&q=80",
+    "https://images.unsplash.com/photo-1565299624946-b28f40a0ae38?w=1080&q=80"];
+  var DUMMY_DINNER=[
+    "https://images.unsplash.com/photo-1414235077428-338989a2e8c0?w=1080&q=80",
+    "https://images.unsplash.com/photo-1544025162-d76694265947?w=1080&q=80",
+    "https://images.unsplash.com/photo-1552566626-52f8b828add9?w=1080&q=80",
+    "https://images.unsplash.com/photo-1466978913421-dad2ebd01d17?w=1080&q=80"];
+  function defaults(){ return { pollSec:30, music:{volume:0.7,tracks:[]}, modes:[
+    { id:uid(), name:"ランチ",   start:"11:00", end:"17:00", sec:5, images:DUMMY_LUNCH.slice() },
+    { id:uid(), name:"ディナー", start:"17:00", end:"23:00", sec:8, images:DUMMY_DINNER.slice() }
+  ]};}
+  var KEY="signage_admin_draft_v2";
+
+  function uid(){ return "m"+Date.now().toString(36)+Math.random().toString(36).slice(2,6); }
+  var $=function(id){return document.getElementById(id);};
+  var slideA=$("slideA"), slideB=$("slideB");
+
+  /* 正規化（新旧両対応） */
+  function normalize(c){
+    c=c||{};
+    function m(o,i){o=o||{};return{
+      id:o.id||uid(), name:o.name||("モード"+(i+1)),
+      start:o.start||"00:00", end:o.end||"00:00",
+      sec:Math.max(1,parseInt(o.sec,10)||5),
+      days:(o.days==="weekday"||o.days==="holiday")?o.days:"all",
+      images:Array.isArray(o.images)?o.images.filter(function(x){return typeof x==="string"&&x;}):[]
+    };}
+    var modes;
+    if(Array.isArray(c.modes)){ modes=c.modes.map(m); }
+    else{ modes=[]; if(c.lunch){var l=m(c.lunch,0);l.name=c.lunch.name||"ランチ";modes.push(l);} if(c.dinner){var d=m(c.dinner,1);d.name=c.dinner.name||"ディナー";modes.push(d);} }
+    if(modes.length===0) modes=defaults().modes;
+    var mus=c.music||{};
+    var music={ volume:(function(){var v=parseFloat(mus.volume);return isNaN(v)?0.7:Math.max(0,Math.min(1,v));})(),
+      tracks:Array.isArray(mus.tracks)?mus.tracks.filter(function(x){return typeof x==="string"&&x;}):[] };
+    var extra=Array.isArray(c.extraHolidays)?c.extraHolidays.filter(function(x){return typeof x==="string"&&x;}):[];
+    return { pollSec:Math.max(5,parseInt(c.pollSec,10)||30), music:music, extraHolidays:extra, modes:modes };
+  }
+
+  var cfg=load();
+  var playIdx=-1, slideIdx=0, countdown=0, frontIsA=true;
+
+  function load(){ try{var r=localStorage.getItem(KEY);if(r){return normalize(JSON.parse(r));}}catch(e){} return normalize(defaults()); }
+  function save(){ try{localStorage.setItem(KEY,JSON.stringify({pollSec:cfg.pollSec,music:cfg.music,extraHolidays:cfg.extraHolidays,modes:cfg.modes}));}catch(e){} }
+
+  function toMin(t){var a=(t||"0:0").split(":");return (parseInt(a[0],10)||0)*60+(parseInt(a[1],10)||0);}
+  function inRange(n,s,e){if(s===e)return false;return s<e?(n>=s&&n<e):(n>=s||n<e);}
+
+  /* 日本の祝日 自動判定（player.htmlと同一ロジック） */
+  var _holCache={};
+  function nthMonday(y,mo,n){var d=new Date(y,mo-1,1),day=d.getDay(),first=1+((8-day)%7);return first+(n-1)*7;}
+  function vernalEq(y){return Math.floor(20.8431+0.242194*(y-1980)-Math.floor((y-1980)/4));}
+  function autumnEq(y){return Math.floor(23.2488+0.242194*(y-1980)-Math.floor((y-1980)/4));}
+  function computeHolidays(y){var base={};function add(mo,d){base[mo+"-"+d]=true;}
+    add(1,1);add(1,nthMonday(y,1,2));add(2,11);if(y>=2020)add(2,23);else if(y<=2018)add(12,23);
+    add(3,vernalEq(y));add(4,29);add(5,3);add(5,4);add(5,5);add(7,nthMonday(y,7,3));if(y>=2016)add(8,11);
+    add(9,nthMonday(y,9,3));add(9,autumnEq(y));add(10,nthMonday(y,10,2));add(11,3);add(11,23);
+    var res={};for(var k in base)res[k]=true;function isBase(mo,d){return !!base[mo+"-"+d];}
+    var dd=new Date(y,0,1),end=new Date(y,11,31);
+    while(dd<=end){var mo=dd.getMonth()+1,da=dd.getDate();
+      if(!isBase(mo,da)&&dd.getDay()!==0){var pv=new Date(y,dd.getMonth(),da-1),nx=new Date(y,dd.getMonth(),da+1);
+        if(isBase(pv.getMonth()+1,pv.getDate())&&isBase(nx.getMonth()+1,nx.getDate()))res[mo+"-"+da]=true;}
+      dd=new Date(y,dd.getMonth(),da+1);}
+    dd=new Date(y,0,1);
+    while(dd<=end){var mo2=dd.getMonth()+1,da2=dd.getDate();
+      if(res[mo2+"-"+da2]&&dd.getDay()===0){var n2=new Date(y,dd.getMonth(),da2+1);
+        while(res[(n2.getMonth()+1)+"-"+n2.getDate()])n2=new Date(n2.getFullYear(),n2.getMonth(),n2.getDate()+1);
+        res[(n2.getMonth()+1)+"-"+n2.getDate()]=true;}
+      dd=new Date(y,dd.getMonth(),da2+1);}
+    return res;}
+  function isNationalHoliday(d){var y=d.getFullYear();if(!_holCache[y])_holCache[y]=computeHolidays(y);return !!_holCache[y][(d.getMonth()+1)+"-"+d.getDate()];}
+  function pad2(n){return (n<10?"0":"")+n;}
+  function isExtraHoliday(d){if(!cfg.extraHolidays)return false;var full=d.getFullYear()+"-"+pad2(d.getMonth()+1)+"-"+pad2(d.getDate());var md=pad2(d.getMonth()+1)+"-"+pad2(d.getDate());return cfg.extraHolidays.indexOf(full)>=0||cfg.extraHolidays.indexOf(md)>=0;}
+  function dayType(d){var wd=d.getDay();if(wd===0||wd===6||isNationalHoliday(d)||isExtraHoliday(d))return "holiday";return "weekday";}
+  function dayMatch(m,d){var s=m.days||"all";return s==="all"||s===dayType(d);}
+  function currentIdx(d){var n=d.getHours()*60+d.getMinutes();for(var i=0;i<cfg.modes.length;i++){var m=cfg.modes[i];if(dayMatch(m,d)&&inRange(n,toMin(m.start),toMin(m.end)))return i;}return -1;}
+
+  function showImage(src){var inc=frontIsA?slideB:slideA,out=frontIsA?slideA:slideB;
+    inc.onload=function(){inc.style.opacity="1";out.style.opacity="0";};
+    inc.onerror=function(){inc.style.opacity="1";out.style.opacity="0";};
+    inc.src=src;if(inc.complete&&inc.naturalWidth>0){inc.style.opacity="1";out.style.opacity="0";}frontIsA=!frontIsA;}
+  function clearSlides(){slideA.style.opacity="0";slideB.style.opacity="0";slideA.removeAttribute("src");slideB.removeAttribute("src");}
+
+  function refreshPlayback(idx,force){
+    if(idx!==playIdx||force){playIdx=idx;slideIdx=0;}
+    var m=idx>=0?cfg.modes[idx]:null;
+    if(!m||m.images.length===0){$("emptyState").style.display="flex";clearSlides();countdown=0;$("ovlCount").textContent="--";$("ovlMode").textContent=m?m.name:"--";return;}
+    $("emptyState").style.display="none";if(slideIdx>=m.images.length)slideIdx=0;
+    showImage(m.images[slideIdx]);countdown=m.sec;$("ovlMode").textContent=m.name;
+  }
+  function nextSlide(){if(playIdx<0)return;var m=cfg.modes[playIdx];if(!m||!m.images.length)return;slideIdx=(slideIdx+1)%m.images.length;showImage(m.images[slideIdx]);countdown=m.sec;}
+
+  function tick(){var d=new Date();
+    $("statusClock").textContent=String(d.getHours()).padStart(2,"0")+":"+String(d.getMinutes()).padStart(2,"0")+":"+String(d.getSeconds()).padStart(2,"0");
+    var idx=currentIdx(d),m=idx>=0?cfg.modes[idx]:null;
+    var dt=dayType(d)==="holiday"?"土日祝":"平日";
+    $("statusMode").textContent=(m?m.name:"⏸ 待機中")+"・"+dt;
+    $("statusMode").className="px-3 py-1.5 rounded-full font-semibold text-sm "+(m?"bg-sky-500 text-slate-900":"bg-slate-700");
+    if(idx!==playIdx)refreshPlayback(idx,true);
+    if(playIdx>=0&&cfg.modes[playIdx]&&cfg.modes[playIdx].images.length>0){countdown--;if(countdown<=0)nextSlide();$("ovlCount").textContent=countdown+"s";}else{$("ovlCount").textContent="--";}}
+
+  function escAttr(s){return String(s).replace(/&/g,"&amp;").replace(/"/g,"&quot;").replace(/</g,"&lt;");}
+
+  function updateSize(){var bytes=0,has=false;cfg.modes.forEach(function(m){m.images.forEach(function(s){if(s.indexOf("data:")===0){has=true;bytes+=Math.ceil(s.length*0.75);}});});
+    if(has){$("sizeWarn").classList.remove("hidden");$("sizeVal").textContent=(bytes/1048576).toFixed(2)+" MB";}else $("sizeWarn").classList.add("hidden");}
+
+  /* モードカード描画 */
+  function renderModes(){
+    var host=$("modeList"); host.innerHTML="";
+    cfg.modes.forEach(function(m, idx){
+      var card=document.createElement("section");
+      card.className="bg-slate-800/60 rounded-xl p-4 border border-slate-700";
+      card.setAttribute("data-idx", idx);
+      var imgsHtml="";
+      m.images.forEach(function(src,i){
+        imgsHtml+='<div class="relative rounded overflow-hidden bg-slate-900 aspect-square border border-slate-700">'+
+          '<img src="'+escAttr(src)+'" class="w-full h-full object-cover" loading="lazy" onerror="this.style.opacity=.2">'+
+          '<span class="absolute bottom-0 left-0 text-[10px] bg-black/60 px-1 rounded-tr">'+(i+1)+'</span>'+
+          '<button data-act="delimg" data-i="'+i+'" class="absolute top-0.5 right-0.5 w-6 h-6 rounded-full bg-rose-600/90 text-white text-xs hover:bg-rose-500">✕</button>'+
+          '</div>';
+      });
+      card.innerHTML=
+        '<div class="flex items-center gap-2 mb-3">'+
+          '<span class="text-slate-500 text-xs cursor-move" title="この行が上にあるほど優先">≡</span>'+
+          '<input data-act="name" type="text" value="'+escAttr(m.name)+'" class="flex-1 bg-slate-900 border border-slate-600 rounded px-3 py-1.5 text-sm font-semibold" placeholder="モード名（例: ランチ）">'+
+          '<button data-act="up" class="w-8 h-8 rounded bg-slate-700 hover:bg-slate-600 text-sm" title="上へ">▲</button>'+
+          '<button data-act="down" class="w-8 h-8 rounded bg-slate-700 hover:bg-slate-600 text-sm" title="下へ">▼</button>'+
+          '<button data-act="delmode" class="w-8 h-8 rounded bg-rose-700/80 hover:bg-rose-600 text-sm" title="このモードを削除">🗑</button>'+
+        '</div>'+
+        '<div class="flex items-center gap-2 mb-3 flex-wrap">'+
+          '<span class="text-xs text-slate-300">時間帯</span>'+
+          '<input data-act="start" type="time" value="'+escAttr(m.start)+'" class="bg-slate-900 border border-slate-600 rounded px-2 py-1.5 text-sm">'+
+          '<span class="text-slate-500">–</span>'+
+          '<input data-act="end" type="time" value="'+escAttr(m.end)+'" class="bg-slate-900 border border-slate-600 rounded px-2 py-1.5 text-sm">'+
+          '<span class="text-xs text-slate-300 ml-2">切替</span>'+
+          '<input data-act="secnum" type="number" min="1" max="600" value="'+m.sec+'" class="w-16 bg-slate-900 border border-slate-600 rounded px-2 py-1 text-sm text-center">'+
+          '<span class="text-xs text-slate-400">秒</span>'+
+        '</div>'+
+        '<div class="flex items-center gap-2 mb-3 flex-wrap">'+
+          '<span class="text-xs text-slate-300">対象日</span>'+
+          '<select data-act="days" class="bg-slate-900 border border-slate-600 rounded px-2 py-1.5 text-sm">'+
+            '<option value="all"'+(m.days==="all"?" selected":"")+'>毎日</option>'+
+            '<option value="weekday"'+(m.days==="weekday"?" selected":"")+'>平日のみ</option>'+
+            '<option value="holiday"'+(m.days==="holiday"?" selected":"")+'>土日祝のみ</option>'+
+          '</select>'+
+          '<span class="text-[11px] text-slate-500">（祝日は自動判定）</span>'+
+        '</div>'+
+        '<div data-act="drop" class="rounded-lg border-2 border-dashed border-slate-600 p-3 text-center cursor-pointer hover:border-sky-400 transition mb-2">'+
+          '<p class="text-sm text-slate-300">画像をドラッグ＆ドロップ</p>'+
+          '<p class="text-[11px] text-slate-500 mt-0.5">またはクリックして選択</p>'+
+          '<input data-act="file" type="file" accept="image/*" multiple class="hidden">'+
+        '</div>'+
+        '<div class="flex gap-2 mb-2">'+
+          '<input data-act="url" type="url" placeholder="画像URL (https://...)" class="flex-1 bg-slate-900 border border-slate-600 rounded px-3 py-2 text-sm">'+
+          '<button data-act="addurl" class="px-3 py-2 rounded bg-sky-500 hover:bg-sky-400 text-slate-900 text-sm font-semibold">追加</button>'+
+        '</div>'+
+        '<div class="flex items-center justify-between mb-2">'+
+          '<span class="text-xs text-slate-400">'+m.images.length+' 枚</span>'+
+          (m.images.length?'<button data-act="clearimg" class="text-[11px] text-rose-400 hover:text-rose-300">画像を全削除</button>':'')+
+        '</div>'+
+        '<div class="grid grid-cols-4 gap-2">'+imgsHtml+'</div>';
+      host.appendChild(card);
+    });
+    bindCards();
+    updateSize();
+  }
+
+  function bindCards(){
+    document.querySelectorAll("#modeList [data-idx]").forEach(function(card){
+      var idx=parseInt(card.getAttribute("data-idx"),10);
+      var q=function(sel){return card.querySelector(sel);};
+      q('[data-act="name"]').addEventListener("input",function(){cfg.modes[idx].name=this.value;save();});
+      q('[data-act="start"]').addEventListener("change",function(){cfg.modes[idx].start=this.value;save();});
+      q('[data-act="end"]').addEventListener("change",function(){cfg.modes[idx].end=this.value;save();});
+      q('[data-act="secnum"]').addEventListener("input",function(){cfg.modes[idx].sec=Math.max(1,Math.min(600,parseInt(this.value,10)||1));save();if(idx===playIdx)countdown=Math.min(countdown,cfg.modes[idx].sec);});
+      q('[data-act="days"]').addEventListener("change",function(){cfg.modes[idx].days=this.value;save();refreshPlayback(currentIdx(new Date()),true);});
+      q('[data-act="up"]').addEventListener("click",function(){moveMode(idx,-1);});
+      q('[data-act="down"]').addEventListener("click",function(){moveMode(idx,1);});
+      q('[data-act="delmode"]').addEventListener("click",function(){
+        if(confirm("モード「"+cfg.modes[idx].name+"」を削除しますか？")){cfg.modes.splice(idx,1);save();renderModes();refreshPlayback(currentIdx(new Date()),true);}
+      });
+      // 画像追加
+      var drop=q('[data-act="drop"]'), file=q('[data-act="file"]');
+      drop.addEventListener("click",function(e){ if(e.target!==file) file.click(); });
+      file.addEventListener("change",function(){handleFiles(idx,this.files);this.value="";});
+      ["dragenter","dragover"].forEach(function(ev){drop.addEventListener(ev,function(e){e.preventDefault();drop.classList.add("drop-active");});});
+      ["dragleave","drop"].forEach(function(ev){drop.addEventListener(ev,function(e){e.preventDefault();drop.classList.remove("drop-active");});});
+      drop.addEventListener("drop",function(e){if(e.dataTransfer&&e.dataTransfer.files)handleFiles(idx,e.dataTransfer.files);});
+      // URL
+      var url=q('[data-act="url"]');
+      q('[data-act="addurl"]').addEventListener("click",function(){var u=url.value.trim();if(u){addImages(idx,[u]);url.value="";}});
+      url.addEventListener("keydown",function(e){if(e.key==="Enter"){var u=url.value.trim();if(u){addImages(idx,[u]);url.value="";}}});
+      // 画像削除
+      var clr=q('[data-act="clearimg"]');
+      if(clr) clr.addEventListener("click",function(){if(confirm("このモードの画像を全て削除しますか？")){cfg.modes[idx].images=[];save();renderModes();if(idx===playIdx)refreshPlayback(playIdx,true);}});
+      card.querySelectorAll('[data-act="delimg"]').forEach(function(b){b.addEventListener("click",function(){cfg.modes[idx].images.splice(parseInt(this.getAttribute("data-i"),10),1);save();renderModes();if(idx===playIdx)refreshPlayback(playIdx,true);});});
+    });
+  }
+
+  function moveMode(idx,dir){var j=idx+dir;if(j<0||j>=cfg.modes.length)return;var t=cfg.modes[idx];cfg.modes[idx]=cfg.modes[j];cfg.modes[j]=t;save();renderModes();refreshPlayback(currentIdx(new Date()),true);}
+
+  function addImages(idx,arr){if(!arr||!arr.length)return;cfg.modes[idx].images=cfg.modes[idx].images.concat(arr);save();renderModes();if(idx===playIdx)refreshPlayback(playIdx,false);}
+
+  /* 取り込んだ画像を自動で圧縮（長辺1920pxに縮小・JPEG化）。config.jsonを軽く保つ。 */
+  function compressImage(dataUrl, cb){
+    try{
+      var img=new Image();
+      img.onload=function(){
+        var w=img.naturalWidth, h=img.naturalHeight;
+        if(!w||!h){ cb(dataUrl); return; }
+        var maxSide=1920;
+        var scale=Math.min(1, maxSide/Math.max(w,h));
+        var cw=Math.max(1,Math.round(w*scale)), ch=Math.max(1,Math.round(h*scale));
+        var c=document.createElement("canvas"); c.width=cw; c.height=ch;
+        c.getContext("2d").drawImage(img,0,0,cw,ch);
+        var out; try{ out=c.toDataURL("image/jpeg",0.8); }catch(e){ out=null; }
+        cb(out && out.length < dataUrl.length ? out : dataUrl);
+      };
+      img.onerror=function(){ cb(dataUrl); };
+      img.src=dataUrl;
+    }catch(e){ cb(dataUrl); }
+  }
+
+  function handleFiles(idx,files){
+    var arr=[],pend=0;
+    for(var i=0;i<files.length;i++){
+      var f=files[i]; if(!f.type||f.type.indexOf("image")!==0) continue;
+      pend++;
+      (function(){
+        var r=new FileReader();
+        r.onload=function(){ compressImage(r.result, function(out){ arr.push(out); if(--pend===0) addImages(idx,arr); }); };
+        r.onerror=function(){ if(--pend===0&&arr.length) addImages(idx,arr); };
+        r.readAsDataURL(f);
+      })();
+    }
+  }
+
+  /* BGM UI */
+  function renderMusic(){
+    $("volRange").value=Math.round(cfg.music.volume*100);
+    $("volVal").textContent=Math.round(cfg.music.volume*100)+"%";
+    var host=$("trackList");host.innerHTML="";
+    if(cfg.music.tracks.length===0){host.innerHTML='<p class="text-[11px] text-slate-500">曲が未登録です</p>';return;}
+    cfg.music.tracks.forEach(function(t,i){
+      var row=document.createElement("div");
+      row.className="flex items-center gap-2 bg-slate-900/60 rounded px-2 py-1";
+      row.innerHTML='<span class="text-[11px] text-slate-500 w-5">'+(i+1)+'</span>'+
+        '<span class="flex-1 text-xs text-slate-200 truncate">'+escAttr(t)+'</span>'+
+        '<button data-mup="'+i+'" class="w-6 h-6 rounded bg-slate-700 hover:bg-slate-600 text-xs">▲</button>'+
+        '<button data-mdown="'+i+'" class="w-6 h-6 rounded bg-slate-700 hover:bg-slate-600 text-xs">▼</button>'+
+        '<button data-mdel="'+i+'" class="w-6 h-6 rounded bg-rose-700/80 hover:bg-rose-600 text-xs">✕</button>';
+      host.appendChild(row);
+    });
+    host.querySelectorAll("[data-mdel]").forEach(function(b){b.addEventListener("click",function(){cfg.music.tracks.splice(parseInt(this.getAttribute("data-mdel"),10),1);save();renderMusic();});});
+    host.querySelectorAll("[data-mup]").forEach(function(b){b.addEventListener("click",function(){var i=parseInt(this.getAttribute("data-mup"),10);if(i>0){var t=cfg.music.tracks[i];cfg.music.tracks[i]=cfg.music.tracks[i-1];cfg.music.tracks[i-1]=t;save();renderMusic();}});});
+    host.querySelectorAll("[data-mdown]").forEach(function(b){b.addEventListener("click",function(){var i=parseInt(this.getAttribute("data-mdown"),10);if(i<cfg.music.tracks.length-1){var t=cfg.music.tracks[i];cfg.music.tracks[i]=cfg.music.tracks[i+1];cfg.music.tracks[i+1]=t;save();renderMusic();}});});
+  }
+
+  /* 特別休日 UI */
+  function renderExtra(){
+    var host=$("extraList");host.innerHTML="";
+    if(!cfg.extraHolidays||cfg.extraHolidays.length===0){host.innerHTML='<span class="text-[11px] text-slate-500">未登録</span>';return;}
+    cfg.extraHolidays.slice().sort().forEach(function(dt,i){
+      var chip=document.createElement("span");
+      chip.className="inline-flex items-center gap-1 bg-slate-900/60 rounded-full px-3 py-1 text-xs text-slate-200";
+      chip.innerHTML=escAttr(dt)+'<button data-xdel="'+escAttr(dt)+'" class="ml-1 text-rose-400 hover:text-rose-300">✕</button>';
+      host.appendChild(chip);
+    });
+    host.querySelectorAll("[data-xdel]").forEach(function(b){b.addEventListener("click",function(){var v=this.getAttribute("data-xdel");cfg.extraHolidays=cfg.extraHolidays.filter(function(x){return x!==v;});save();renderExtra();refreshPlayback(currentIdx(new Date()),true);});});
+  }
+
+  function exportConfig(){
+    var out={pollSec:cfg.pollSec,music:{volume:cfg.music.volume,tracks:cfg.music.tracks},extraHolidays:cfg.extraHolidays,modes:cfg.modes.map(function(m){return{id:m.id,name:m.name,start:m.start,end:m.end,sec:m.sec,days:m.days,images:m.images};})};
+    var blob=new Blob([JSON.stringify(out,null,2)],{type:"application/json"});
+    var a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download="config.json";
+    document.body.appendChild(a);a.click();setTimeout(function(){URL.revokeObjectURL(a.href);a.remove();},100);
+  }
+  function importConfig(json){try{cfg=normalize(JSON.parse(json));save();$("pollSec").value=cfg.pollSec;renderMusic();renderExtra();renderModes();refreshPlayback(currentIdx(new Date()),true);}catch(e){alert("config.json の形式が正しくありません。");}}
+
+  function bind(){
+    $("pollSec").addEventListener("input",function(){cfg.pollSec=Math.max(5,Math.min(3600,parseInt(this.value,10)||30));save();});
+    $("btnAddMode").addEventListener("click",function(){
+      cfg.modes.push({id:uid(),name:"新しいモード",start:"09:00",end:"11:00",sec:5,days:"all",images:[]});
+      save();renderModes();
+      window.scrollTo({top:document.body.scrollHeight,behavior:"smooth"});
+    });
+    $("btnReset").addEventListener("click",function(){if(confirm("初期状態（ランチ・ディナー＋ダミー画像）に戻しますか？")){cfg=normalize(defaults());save();$("pollSec").value=cfg.pollSec;renderMusic();renderExtra();renderModes();refreshPlayback(currentIdx(new Date()),true);}});
+    // BGM
+    $("volRange").addEventListener("input",function(){cfg.music.volume=Math.max(0,Math.min(1,(parseInt(this.value,10)||0)/100));$("volVal").textContent=Math.round(cfg.music.volume*100)+"%";save();});
+    $("btnAddTrack").addEventListener("click",function(){var u=$("trackUrl").value.trim();if(u){cfg.music.tracks.push(u);save();renderMusic();$("trackUrl").value="";}});
+    $("trackUrl").addEventListener("keydown",function(e){if(e.key==="Enter"){var u=this.value.trim();if(u){cfg.music.tracks.push(u);save();renderMusic();this.value="";}}});
+    // 特別休日
+    $("btnAddExtra").addEventListener("click",function(){var v=$("extraDate").value;if(v&&cfg.extraHolidays.indexOf(v)<0){cfg.extraHolidays.push(v);save();renderExtra();refreshPlayback(currentIdx(new Date()),true);$("extraDate").value="";}});
+    $("btnExport").addEventListener("click",exportConfig);
+    $("btnImport").addEventListener("click",function(){$("importFile").click();});
+    $("importFile").addEventListener("change",function(){var f=this.files[0];if(!f)return;var r=new FileReader();r.onload=function(){importConfig(r.result);};r.readAsText(f);this.value="";});
+    slideA.addEventListener("click",nextSlide);slideB.addEventListener("click",nextSlide);
+  }
+
+  $("pollSec").value=cfg.pollSec;
+  renderMusic(); renderExtra(); renderModes(); bind(); refreshPlayback(currentIdx(new Date()),true); tick(); setInterval(tick,1000);
+})();
+</script>
+</body>
+</html>
