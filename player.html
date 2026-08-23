@@ -32,6 +32,7 @@
 <div id="stage">
   <img id="slideA" class="slide" alt="">
   <img id="slideB" class="slide" alt="">
+  <video id="vid" class="slide" muted playsinline webkit-playsinline></video>
   <div id="empty">現在の時間帯に表示する画像がありません<br><span style="font-size:2.6vh">管理ページから追加してください</span></div>
   <div id="err"></div>
   <div id="badge">--</div>
@@ -55,10 +56,12 @@
   var playModeId = null, slideIdx = 0, countdown = 0, frontIsA = true;
   var started = false, wakeLock = null, pollAcc = 0;
   var audioEl = null, musicTracks = [], musicIdx = 0, musicStr = "";
+  var currentIsVideo = false;
 
   var $ = function(id){ return document.getElementById(id); };
-  var slideA=$("slideA"), slideB=$("slideB"), stage=$("stage");
+  var slideA=$("slideA"), slideB=$("slideB"), vid=$("vid"), stage=$("stage");
   if(DEBUG) stage.classList.add("debug");
+  function isVideo(u){ return /\.(mp4|webm|ogg|mov|m4v)(\?|#|$)/i.test(u||""); }
 
   function toMin(t){ var a=(t||"0:0").split(":"); return (parseInt(a[0],10)||0)*60+(parseInt(a[1],10)||0); }
   function inRange(now,s,e){ if(s===e)return false; return s<e ? (now>=s&&now<e) : (now>=s||now<e); }
@@ -229,16 +232,35 @@
     $("startBtn").style.display = "inline-block";
   }
 
-  function showImage(src){
-    var incoming = frontIsA ? slideB : slideA;
-    var outgoing = frontIsA ? slideA : slideB;
-    incoming.onload = function(){ incoming.style.opacity="1"; outgoing.style.opacity="0"; };
-    incoming.onerror= function(){ incoming.style.opacity="1"; outgoing.style.opacity="0"; };
-    incoming.src = src;
-    if(incoming.complete && incoming.naturalWidth>0){ incoming.style.opacity="1"; outgoing.style.opacity="0"; }
-    frontIsA = !frontIsA;
+  // 動画の終了・エラー時に次へ
+  vid.addEventListener("ended", function(){ if(!vid.loop) nextSlide(); });
+  vid.addEventListener("error", function(){ setTimeout(function(){ if(currentIsVideo) nextSlide(); }, 1500); });
+
+  function showMedia(url, playlistLen){
+    if(isVideo(url)){
+      currentIsVideo = true;
+      slideA.style.opacity="0"; slideB.style.opacity="0";
+      vid.loop = (playlistLen===1);   // 動画1本だけならループ
+      vid.muted = true;               // BGMと衝突しないようミュート
+      vid.src = url;
+      vid.style.opacity="1";
+      var p=vid.play(); if(p&&p.catch) p.catch(function(){});
+    }else{
+      currentIsVideo = false;
+      vid.style.opacity="0"; try{ vid.pause(); }catch(e){}
+      var incoming = frontIsA ? slideB : slideA;
+      var outgoing = frontIsA ? slideA : slideB;
+      incoming.onload = function(){ incoming.style.opacity="1"; outgoing.style.opacity="0"; };
+      incoming.onerror= function(){ incoming.style.opacity="1"; outgoing.style.opacity="0"; };
+      incoming.src = url;
+      if(incoming.complete && incoming.naturalWidth>0){ incoming.style.opacity="1"; outgoing.style.opacity="0"; }
+      frontIsA = !frontIsA;
+    }
   }
-  function clearSlides(){ slideA.style.opacity="0"; slideB.style.opacity="0"; slideA.removeAttribute("src"); slideB.removeAttribute("src"); }
+  function clearSlides(){
+    slideA.style.opacity="0"; slideB.style.opacity="0"; slideA.removeAttribute("src"); slideB.removeAttribute("src");
+    vid.style.opacity="0"; try{ vid.pause(); vid.removeAttribute("src"); }catch(e){} currentIsVideo=false;
+  }
 
   function refreshPlayback(mode, force){
     var id = mode ? mode.id : null;
@@ -247,15 +269,15 @@
     if(!mode || imgs.length===0){ $("empty").style.display="flex"; clearSlides(); countdown=0; return; }
     $("empty").style.display="none";
     if(slideIdx>=imgs.length) slideIdx=0;
-    showImage(imgs[slideIdx]);
-    countdown = mode.sec;
+    showMedia(imgs[slideIdx], imgs.length);
+    countdown = isVideo(imgs[slideIdx]) ? -1 : mode.sec;  // 動画は再生終了で切替
   }
   function nextSlide(){
     var mode = modeById(playModeId); if(!mode) return;
     var imgs=mode.images; if(imgs.length===0) return;
     slideIdx=(slideIdx+1)%imgs.length;
-    showImage(imgs[slideIdx]);
-    countdown = mode.sec;
+    showMedia(imgs[slideIdx], imgs.length);
+    countdown = isVideo(imgs[slideIdx]) ? -1 : mode.sec;
   }
 
   function tick(){
@@ -264,13 +286,14 @@
     var mode = currentMode(d);
     if((mode?mode.id:null)!==playModeId) refreshPlayback(mode, true);
     var active = modeById(playModeId);
-    if(active && active.images.length>0){
+    if(active && active.images.length>0 && !currentIsVideo){
       countdown--;
       if(countdown<=0) nextSlide();
     }
     var hh=String(d.getHours()).padStart(2,"0"),mm=String(d.getMinutes()).padStart(2,"0"),ss=String(d.getSeconds()).padStart(2,"0");
     var dt = dayType(d)==="holiday" ? "土日祝" : "平日";
-    $("badge").textContent = hh+":"+mm+":"+ss+" ("+dt+") / "+(mode?mode.name:"待機")+" / 次:"+(active&&countdown>0?countdown+"s":"--");
+    var nextTxt = currentIsVideo ? "動画" : (active&&countdown>0?countdown+"s":"--");
+    $("badge").textContent = hh+":"+mm+":"+ss+" ("+dt+") / "+(mode?mode.name:"待機")+" / 次:"+nextTxt;
     pollAcc++;
     if(pollAcc >= cfg.pollSec){ pollAcc=0; fetchConfig(); }
   }

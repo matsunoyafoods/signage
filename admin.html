@@ -92,6 +92,38 @@
       </p>
     </section>
 
+    <!-- GitHubへ直接アップ -->
+    <section class="bg-gradient-to-br from-emerald-900/30 to-slate-800/60 rounded-xl p-4 border border-emerald-800">
+      <div class="flex items-center justify-between gap-2 flex-wrap mb-2">
+        <h2 class="text-sm font-bold text-emerald-200">⚡ GitHubへ直接アップ（ワンクリック反映）</h2>
+        <button id="ghToggle" class="text-[11px] text-slate-300 underline">接続設定</button>
+      </div>
+      <button id="btnGhPush" class="w-full py-3 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-slate-900 font-bold text-sm">🚀 この設定をサイネージに反映する</button>
+      <button id="btnGhPull" class="w-full mt-2 py-2 rounded-lg bg-slate-700 hover:bg-slate-600 text-slate-100 text-sm">⬇ 現在サイネージで使っている設定を読み込む</button>
+      <p id="ghStatus" class="text-[12px] mt-2 text-slate-400">未接続です。「接続設定」からトークンを登録してください。</p>
+
+      <div id="ghPanel" class="hidden mt-3 space-y-2 border-t border-slate-700 pt-3">
+        <div class="grid grid-cols-2 gap-2">
+          <label class="text-[11px] text-slate-400">オーナー<input id="ghOwner" type="text" class="w-full mt-0.5 bg-slate-900 border border-slate-600 rounded px-2 py-1 text-sm" placeholder="matsunoyafoods"></label>
+          <label class="text-[11px] text-slate-400">リポジトリ<input id="ghRepo" type="text" class="w-full mt-0.5 bg-slate-900 border border-slate-600 rounded px-2 py-1 text-sm" placeholder="signage"></label>
+          <label class="text-[11px] text-slate-400">ブランチ<input id="ghBranch" type="text" class="w-full mt-0.5 bg-slate-900 border border-slate-600 rounded px-2 py-1 text-sm" placeholder="main"></label>
+          <label class="text-[11px] text-slate-400">ファイル名<input id="ghPath" type="text" class="w-full mt-0.5 bg-slate-900 border border-slate-600 rounded px-2 py-1 text-sm" placeholder="config.json"></label>
+        </div>
+        <label class="block text-[11px] text-slate-400">アクセストークン（fine-grained PAT）
+          <input id="ghToken" type="password" class="w-full mt-0.5 bg-slate-900 border border-slate-600 rounded px-2 py-1 text-sm" placeholder="github_pat_...">
+        </label>
+        <div class="flex gap-2">
+          <button id="ghSave" class="px-3 py-1.5 rounded bg-sky-500 hover:bg-sky-400 text-slate-900 text-xs font-semibold">保存</button>
+          <button id="ghClear" class="px-3 py-1.5 rounded bg-slate-700 hover:bg-slate-600 text-xs">トークン削除</button>
+        </div>
+        <p class="text-[11px] text-slate-500 leading-relaxed">
+          トークンは <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" class="text-sky-400 underline">GitHubのfine-grained token作成ページ</a> で発行します。
+          Repository access は <code class="text-slate-300">matsunoyafoods/signage</code> のみ、Permissions は <code class="text-slate-300">Contents: Read and write</code> だけを付けてください。
+          トークンはこのPCのブラウザ内にのみ保存されます。admin.html は公開せず手元に置いたままにしてください。
+        </p>
+      </div>
+    </section>
+
     <!-- 特別休日（土日祝扱いにする日） -->
     <section class="bg-slate-800/60 rounded-xl p-4 border border-slate-700">
       <h2 class="text-sm font-bold text-slate-300 mb-1">📅 特別休日（土日祝あつかいにする日）</h2>
@@ -224,6 +256,7 @@
     if(playIdx>=0&&cfg.modes[playIdx]&&cfg.modes[playIdx].images.length>0){countdown--;if(countdown<=0)nextSlide();$("ovlCount").textContent=countdown+"s";}else{$("ovlCount").textContent="--";}}
 
   function escAttr(s){return String(s).replace(/&/g,"&amp;").replace(/"/g,"&quot;").replace(/</g,"&lt;");}
+  function isVideo(u){return /\.(mp4|webm|ogg|mov|m4v)(\?|#|$)/i.test(u||"");}
 
   function updateSize(){var bytes=0,has=false;cfg.modes.forEach(function(m){m.images.forEach(function(s){if(s.indexOf("data:")===0){has=true;bytes+=Math.ceil(s.length*0.75);}});});
     if(has){$("sizeWarn").classList.remove("hidden");$("sizeVal").textContent=(bytes/1048576).toFixed(2)+" MB";}else $("sizeWarn").classList.add("hidden");}
@@ -237,8 +270,11 @@
       card.setAttribute("data-idx", idx);
       var imgsHtml="";
       m.images.forEach(function(src,i){
+        var inner = isVideo(src)
+          ? '<div class="w-full h-full flex flex-col items-center justify-center text-center p-1"><div class="text-2xl">🎬</div><div class="text-[9px] text-slate-400 mt-0.5 break-all leading-tight">'+escAttr(src.split("/").pop())+'</div></div>'
+          : '<img src="'+escAttr(src)+'" class="w-full h-full object-cover" loading="lazy" onerror="this.style.opacity=.2">';
         imgsHtml+='<div class="relative rounded overflow-hidden bg-slate-900 aspect-square border border-slate-700">'+
-          '<img src="'+escAttr(src)+'" class="w-full h-full object-cover" loading="lazy" onerror="this.style.opacity=.2">'+
+          inner+
           '<span class="absolute bottom-0 left-0 text-[10px] bg-black/60 px-1 rounded-tr">'+(i+1)+'</span>'+
           '<button data-act="delimg" data-i="'+i+'" class="absolute top-0.5 right-0.5 w-6 h-6 rounded-full bg-rose-600/90 text-white text-xs hover:bg-rose-500">✕</button>'+
           '</div>';
@@ -275,7 +311,7 @@
           '<input data-act="file" type="file" accept="image/*" multiple class="hidden">'+
         '</div>'+
         '<div class="flex gap-2 mb-2">'+
-          '<input data-act="url" type="url" placeholder="画像URL (https://...)" class="flex-1 bg-slate-900 border border-slate-600 rounded px-3 py-2 text-sm">'+
+          '<input data-act="url" type="url" placeholder="画像/動画URL (https://... .mp4も可)" class="flex-1 bg-slate-900 border border-slate-600 rounded px-3 py-2 text-sm">'+
           '<button data-act="addurl" class="px-3 py-2 rounded bg-sky-500 hover:bg-sky-400 text-slate-900 text-sm font-semibold">追加</button>'+
         '</div>'+
         '<div class="flex items-center justify-between mb-2">'+
@@ -393,6 +429,98 @@
     host.querySelectorAll("[data-xdel]").forEach(function(b){b.addEventListener("click",function(){var v=this.getAttribute("data-xdel");cfg.extraHolidays=cfg.extraHolidays.filter(function(x){return x!==v;});save();renderExtra();refreshPlayback(currentIdx(new Date()),true);});});
   }
 
+  /* ---- GitHub 直接アップ ---- */
+  var GH_KEY="signage_gh_v1";
+  function ghLoad(){ try{var r=localStorage.getItem(GH_KEY);if(r)return JSON.parse(r);}catch(e){} return {owner:"matsunoyafoods",repo:"signage",branch:"main",path:"config.json",token:""}; }
+  function ghSaveCfg(g){ try{localStorage.setItem(GH_KEY,JSON.stringify(g));}catch(e){} }
+  function ghStatus(msg,cls){ var el=$("ghStatus"); el.textContent=msg; el.className="text-[12px] mt-2 "+(cls||"text-slate-400"); }
+
+  function utf8ToBase64(str){
+    var bytes=new TextEncoder().encode(str);
+    var bin="", chunk=0x8000;
+    for(var i=0;i<bytes.length;i+=chunk){ bin+=String.fromCharCode.apply(null, bytes.subarray(i,i+chunk)); }
+    return btoa(bin);
+  }
+  function buildConfigObject(){
+    return {pollSec:cfg.pollSec,music:{volume:cfg.music.volume,tracks:cfg.music.tracks},extraHolidays:cfg.extraHolidays,
+      modes:cfg.modes.map(function(m){return{id:m.id,name:m.name,start:m.start,end:m.end,sec:m.sec,days:m.days,images:m.images};})};
+  }
+  function ghHeaders(token){ return {"Authorization":"Bearer "+token,"Accept":"application/vnd.github+json","X-GitHub-Api-Version":"2022-11-28"}; }
+
+  function ghGetSha(g){
+    // ディレクトリ一覧からSHAを取得（大容量ファイルでも安全）
+    var parts=g.path.split("/"); var name=parts.pop(); var dir=parts.join("/");
+    var url="https://api.github.com/repos/"+g.owner+"/"+g.repo+"/contents/"+dir+"?ref="+encodeURIComponent(g.branch);
+    return fetch(url,{headers:ghHeaders(g.token)}).then(function(r){
+      if(r.status===404) return null;
+      if(r.status===401) throw new Error("トークンが無効です（401）");
+      if(r.status===403) throw new Error("権限がありません（403）。Contents: Read and write を確認してください");
+      if(!r.ok) throw new Error("一覧取得に失敗 HTTP "+r.status);
+      return r.json().then(function(arr){
+        if(!Array.isArray(arr)) return null;
+        for(var i=0;i<arr.length;i++){ if(arr[i].name===name) return arr[i].sha; }
+        return null;
+      });
+    });
+  }
+  function ghPush(){
+    var g=ghLoad();
+    if(!g.token){ ghStatus("トークンが未設定です。「接続設定」から登録してください。","text-[12px] mt-2 text-amber-400"); $("ghPanel").classList.remove("hidden"); return; }
+    var json=JSON.stringify(buildConfigObject(),null,2);
+    var sizeMB=(new TextEncoder().encode(json).length/1048576).toFixed(2);
+    $("btnGhPush").disabled=true;
+    ghStatus("アップロード中…（"+sizeMB+" MB）","text-[12px] mt-2 text-sky-300");
+    ghGetSha(g).then(function(sha){
+      var body={message:"Update "+g.path+" via admin ("+new Date().toLocaleString("ja-JP")+")",content:utf8ToBase64(json),branch:g.branch};
+      if(sha) body.sha=sha;
+      return fetch("https://api.github.com/repos/"+g.owner+"/"+g.repo+"/contents/"+g.path,{
+        method:"PUT", headers:ghHeaders(g.token), body:JSON.stringify(body)
+      });
+    }).then(function(r){
+      if(!r.ok){ return r.text().then(function(t){ throw new Error("HTTP "+r.status+" "+t.slice(0,160)); }); }
+      return r.json();
+    }).then(function(){
+      ghStatus("✅ 反映しました（"+sizeMB+" MB）。約30秒でサイネージが自動で切り替わります。","text-[12px] mt-2 text-emerald-400");
+    }).catch(function(e){
+      ghStatus("❌ 失敗: "+e.message,"text-[12px] mt-2 text-rose-400");
+    }).then(function(){ $("btnGhPush").disabled=false; });
+  }
+  function ghPull(auto){
+    var g=ghLoad();
+    var url="https://api.github.com/repos/"+g.owner+"/"+g.repo+"/contents/"+g.path+"?ref="+encodeURIComponent(g.branch)+"&_t="+Date.now();
+    var headers={"Accept":"application/vnd.github.raw","X-GitHub-Api-Version":"2022-11-28"};
+    if(g.token) headers["Authorization"]="Bearer "+g.token;
+    if(!auto) ghStatus("現在の設定を読み込み中…","text-[12px] mt-2 text-sky-300");
+    return fetch(url,{headers:headers,cache:"no-store"}).then(function(r){
+      if(!r.ok) throw new Error("HTTP "+r.status);
+      return r.text();
+    }).then(function(t){
+      cfg=normalize(JSON.parse(t)); save();
+      $("pollSec").value=cfg.pollSec; renderMusic(); renderExtra(); renderModes(); refreshPlayback(currentIdx(new Date()),true);
+      ghStatus("✅ 現在サイネージの設定を読み込みました（"+cfg.modes.length+"モード）","text-[12px] mt-2 text-emerald-400");
+    }).catch(function(e){ if(!auto) ghStatus("❌ 読み込み失敗: "+e.message,"text-[12px] mt-2 text-rose-400"); });
+  }
+  function ghInit(){
+    var g=ghLoad();
+    $("ghOwner").value=g.owner; $("ghRepo").value=g.repo; $("ghBranch").value=g.branch; $("ghPath").value=g.path; $("ghToken").value=g.token;
+    if(g.token) ghStatus("接続済み: "+g.owner+"/"+g.repo+" ("+g.path+")","text-[12px] mt-2 text-emerald-400/90");
+    $("ghToggle").addEventListener("click",function(){ $("ghPanel").classList.toggle("hidden"); });
+    $("ghSave").addEventListener("click",function(){
+      var ng={owner:$("ghOwner").value.trim()||"matsunoyafoods",repo:$("ghRepo").value.trim()||"signage",
+        branch:$("ghBranch").value.trim()||"main",path:$("ghPath").value.trim()||"config.json",token:$("ghToken").value.trim()};
+      ghSaveCfg(ng);
+      ghStatus(ng.token?("接続済み: "+ng.owner+"/"+ng.repo+" ("+ng.path+")"):"トークン未設定", ng.token?"text-[12px] mt-2 text-emerald-400/90":"text-[12px] mt-2 text-amber-400");
+      $("ghPanel").classList.add("hidden");
+    });
+    $("ghClear").addEventListener("click",function(){
+      if(confirm("保存したトークンを削除しますか？")){ var g2=ghLoad(); g2.token=""; ghSaveCfg(g2); $("ghToken").value=""; ghStatus("トークンを削除しました","text-[12px] mt-2 text-slate-400"); }
+    });
+    $("btnGhPush").addEventListener("click",ghPush);
+    $("btnGhPull").addEventListener("click",function(){ ghPull(false); });
+    // 起動時に現在の本番設定を自動読み込み（ダミーでの誤上書きを防止）
+    ghPull(true);
+  }
+
   function exportConfig(){
     var out={pollSec:cfg.pollSec,music:{volume:cfg.music.volume,tracks:cfg.music.tracks},extraHolidays:cfg.extraHolidays,modes:cfg.modes.map(function(m){return{id:m.id,name:m.name,start:m.start,end:m.end,sec:m.sec,days:m.days,images:m.images};})};
     var blob=new Blob([JSON.stringify(out,null,2)],{type:"application/json"});
@@ -422,7 +550,7 @@
   }
 
   $("pollSec").value=cfg.pollSec;
-  renderMusic(); renderExtra(); renderModes(); bind(); refreshPlayback(currentIdx(new Date()),true); tick(); setInterval(tick,1000);
+  renderMusic(); renderExtra(); renderModes(); bind(); ghInit(); refreshPlayback(currentIdx(new Date()),true); tick(); setInterval(tick,1000);
 })();
 </script>
 </body>
